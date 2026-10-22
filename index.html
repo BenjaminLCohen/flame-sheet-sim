@@ -1,0 +1,751 @@
+<title>Flame Sheet Sim</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=STIX+Two+Text:ital,wght@0,400;0,500;1,400&display=swap">
+<style>
+  /* Layout for a 16:9 screen: full-bleed WebGL canvas; identity card top-left; colour scale bottom-left; one control column on the right.
+     Dark-first, single theme (a 3-D viewer). Variables are set in a serif math face; UI text in a sans. */
+  :root {
+    --bg: #07070c; --fg: #ececf2; --muted: #9a9aaa; --faint: #6c6c7c; --line: #262634; --panel: rgba(12,12,18,0.86);
+    --accent: #ffb300; --wall: #ffb300; --wrinkle: #5ba8e8; --local: #e08bd6; --tilt: #9ad5b8; --basis: #c9c9d6;
+    --font-ui: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --font-math: "STIX Two Text", "Times New Roman", Times, serif;
+    --font-mono: "DejaVu Sans Mono", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-ui); font-size: 13px; overflow: hidden; }
+  #c { display: block; width: 100%; height: 100%; }
+  /* math */
+  .m { font-family: var(--font-math); font-style: italic; font-size: 1.12em; white-space: nowrap; }
+  .m sub, .m sup { font-style: normal; font-size: 68%; line-height: 0; }
+  .m .op { font-style: normal; padding: 0 0.18em; }
+  .m .up { font-style: normal; }
+  /* identity card */
+  .hud { position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); pointer-events: none;
+         background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 11px; display: grid; gap: 6px; }
+  .hud h1 { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .hud .dims { pointer-events: auto; display: flex; gap: 16px; color: var(--muted); }
+  .hud .dims label { display: flex; gap: 8px; align-items: center; }
+  .num { width: 66px; background: #0a0a12; color: var(--fg); border: 1px solid var(--line); border-radius: 5px; padding: 4px 7px; font: inherit; font-variant-numeric: tabular-nums; }
+  .identity { display: grid; gap: 2px; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .identity .eq { font-size: 17px; }
+  .identity .val { font-size: 15.5px; font-family: var(--font-math); }
+  .a { color: var(--wrinkle); } .i { color: var(--local); } .s { color: var(--accent); }
+  /* control column */
+  .panel { position: fixed; top: calc(14px + env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+           width: 238px; overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 4px 13px 10px; font-size: 12px; }
+  .sec { border-top: 1px solid var(--line); padding: 10px 0 10px; display: grid; gap: 6px; }
+  .sec:first-child { border-top: 0; }
+  .sec h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; display: flex; align-items: center; gap: 7px; }
+  .sec h2::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--fg)); }
+  .sec.geq { --c: #f2f2f2; } .sec.wall { --c: var(--wall); } .sec.wrinkle { --c: var(--wrinkle); } .sec.local { --c: var(--local); } .sec.tilt { --c: var(--tilt); } .sec.basis { --c: var(--basis); } .sec.geom { --c: var(--muted); }
+  .sec h2 { color: var(--c, var(--fg)); }
+  .sec .hint { color: var(--muted); font-size: 11.5px; margin: 0; line-height: 1.4; }
+  .sec .law { font-size: 12.5px; color: var(--fg); margin: 0; line-height: 1.6; }
+  .row { display: grid; grid-template-columns: 1fr auto; grid-template-areas: "lab val" "sl sl"; align-items: baseline; column-gap: 10px; row-gap: 2px; }
+  .row label { grid-area: lab; color: var(--fg); }
+  .row output { grid-area: val; font-family: var(--font-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 48px; text-align: right; }
+  .row input[type=range] { grid-area: sl; width: 100%; margin: 0; height: 20px; accent-color: var(--c, var(--accent)); }
+  .nums { display: flex; gap: 10px; flex-wrap: wrap; color: var(--muted); }
+  .nums label { display: flex; gap: 6px; align-items: center; }
+  .nums .num { width: 56px; }
+  .read { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 2px; }
+  .btns button { background: #0a0a12; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 11px; font: inherit; font-size: 12px; cursor: pointer; }
+  .btns button:hover { border-color: var(--muted); }
+  .check { display: flex; gap: 8px; align-items: center; color: var(--fg); }
+  .check input { flex: none; }
+  .law.sub { color: var(--muted); font-size: 12px; margin: -4px 0 0 24px; line-height: 1.5; }
+  details { color: var(--muted); font-size: 12px; } details summary { cursor: pointer; color: var(--faint); } details p { margin: 6px 0 0; line-height: 1.5; }
+  button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* colour scale */
+  .legend { position: fixed; right: calc(max(16px, env(safe-area-inset-right, 0px)) + 238px + 26px + 12px); top: calc(14px + env(safe-area-inset-top, 0px)); pointer-events: none; display: grid; gap: 5px; width: 260px;
+            background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px 12px; color: var(--muted); font-size: 12px; }
+  .legend .bar { height: 10px; border-radius: 3px; background: linear-gradient(90deg, #4a1800 0%, #a8380a 22%, #ff8c1a 42%, #ffd166 62%, #fff3c4 82%, #ffffff 100%); }
+  .legend .ends { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+  .histbox { position: fixed; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px 8px; color: var(--muted); font-size: 12px; display: grid; gap: 6px; }
+  .histbox canvas { display: block; width: 340px; height: 170px; }
+  .check .m { font-size: 1.05em; }
+  @media (max-width: 760px) {
+    .panel { top: auto; right: max(16px, env(safe-area-inset-right, 0px)); left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); width: auto; max-height: 46%; }
+    .legend { right: max(16px, env(safe-area-inset-right, 0px)); top: calc(120px + env(safe-area-inset-top, 0px)); width: 180px; }
+    .hud { min-width: 0; }
+    .histbox { left: max(16px, env(safe-area-inset-left, 0px)); bottom: auto; top: calc(260px + env(safe-area-inset-top, 0px)); }
+    .histbox canvas { width: 260px; height: 130px; }
+  }
+</style>
+
+<canvas id="c"></canvas>
+<div class="hud">
+  <div class="identity">
+    <div class="eq m"><span class="s">S<sub>T</sub><span class="op">/</span>S<sub>L</sub></span><span class="op">=</span><span class="a">A<sub>T</sub><span class="op">/</span>A<sub>0</sub></span><span class="op">×</span><span class="i">I<sub>0</sub></span></div>
+    <div class="val"><span class="s" id="rS">1.00</span> &nbsp;=&nbsp; <span class="a" id="rA">1.00</span> &nbsp;×&nbsp; <span class="i" id="rI">1.00</span></div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="sec geom">
+    <h2>Channel</h2>
+    <div class="nums"><label for="dimW">width, mm <input class="num" id="dimW" type="number" min="2" max="200" step="0.5" value="20"></label><label for="dimH">gap, mm <input class="num" id="dimH" type="number" min="0.5" max="50" step="0.1" value="3"></label></div>
+  </div>
+  <div class="sec wall">
+    <h2>Heat loss to the wall</h2>
+    <p class="law"><span class="m">δ<sub>q</sub><span class="op">=</span>Pe<sup>*</sup> α<span class="op">/</span>S<sub>d</sub><sup>*</sup></span> &nbsp;·&nbsp; <span class="m">m<sup>2</sup> ln m<sup>2</sup><span class="op">=</span>−Λ</span></p>
+    <div class="row"><label for="loss">loss strength (reach of the cold zone)</label><output id="lossv">0.00</output><input id="loss" type="range" min="0" max="1" step="0.01" value="0"></div>
+    <div class="row"><label for="pe">quench Péclet number <span class="m">Pe<sup>*</sup></span></label><output id="pev">40.0</output><input id="pe" type="range" min="2" max="80" step="0.5" value="40"></div>
+    <div class="nums">
+      <label for="SL"><span class="m">S<sub>L</sub></span>, m/s <input class="num" id="SL" type="number" min="0.001" max="5" step="0.001" value="0.194"></label>
+      <label for="alpha"><span class="m">α</span>, mm²/s <input class="num" id="alpha" type="number" min="1" max="500" step="0.1" value="30.8"></label>
+    </div>
+    <div class="read" id="dq"></div>
+    <details><summary>model</summary><p>Isothermal walls: once loss is on, the wall itself is at the quench limit and burns cold; strength sets how far the cold zone reaches in. A layer next to every wall, thinner where the sheet burns faster. Inside it the rate follows the non-adiabatic relation with <span class="m">m<span class="op">=</span>S<span class="op">/</span>S<sub>ad</sub></span> and a loss parameter <span class="m">Λ</span> that rises toward the wall and falls as <span class="m">1<span class="op">/</span>S<sub>ad</sub><sup>2</sup></span>; past <span class="m">Λ<span class="op">=</span>1<span class="op">/</span>e</span> the patch is quenched. The Markstein response fades inside the layer, the front lags there, and no cell centre is placed in it.</p></details>
+  </div>
+  <div class="sec wrinkle">
+    <h2>Wrinkling factor</h2>
+    <p class="hint">One finger toward the fresh gas: parabolic nose, straight flanks, convex throughout.</p>
+    <div class="row"><label for="amp">bulge height, mm</label><output id="ampv">0.00</output><input id="amp" type="range" min="0" max="6" step="0.05" value="0"></div>
+    <div class="row"><label for="pos">bulge centre, fraction of width</label><output id="posv">0.50</output><input id="pos" type="range" min="0.333" max="0.667" step="0.001" value="0.5"></div>
+  </div>
+  <div class="sec tilt">
+    <h2>Cross-gap tilt</h2>
+    <p class="hint">0° is vertical; positive brings the top plate's edge toward you. A plan-view camera cannot see this.</p>
+    <div class="row"><label for="tilt">tilt, degrees</label><output id="tiltv">0.0</output><input id="tilt" type="range" min="-30" max="60" step="0.5" value="0"></div>
+  </div>
+  <div class="sec local">
+    <h2>Local consumption</h2>
+    <p class="law"><span class="m">S<sub>d</sub><sup>*</sup><span class="op">/</span>S<sub>L</sub><span class="op">=</span>1<span class="op">−</span>L κ<sub>+</sub><span class="op">+</span>L<sub>c</sub> κ<sub>−</sub></span> &nbsp;<span class="hint">V: both arms rise for L &lt; 0</span></p>
+    <div class="row"><label for="cellH">cell height, mm</label><output id="cellHv">0.00</output><input id="cellH" type="range" min="0" max="1.5" step="0.02" value="0"></div>
+    <div class="row"><label for="cellR">cell spacing, mm</label><output id="cellRv">2.5</output><input id="cellR" type="range" min="1" max="6" step="0.1" value="2.5"></div>
+    <div class="row"><label for="mark">Markstein length <span class="m">L</span>, mm</label><output id="markv">0.00</output><input id="mark" type="range" min="-1" max="1" step="0.01" value="0"></div>
+    <div class="row"><label for="cusp">cusp arm, fraction of |<span class="m">L</span>|</label><output id="cuspv">0.50</output><input id="cusp" type="range" min="0" max="1" step="0.01" value="0.5"></div>
+    <div class="read" id="krange"></div>
+    <div class="btns"><button id="reseed" type="button">Reseed cells</button><span id="ncells" class="read"></span></div>
+    <details><summary>model</summary><p>Parabolic cells placed by Poisson-disc sampling, so none sits closer than the spacing to a neighbour; the envelope of the caps meets along cusps that form random polygons. Negative <span class="m">L</span> (Le &lt; 1): bulges burn faster, cusps slower.</p></details>
+  </div>
+  <div class="sec geq">
+    <h2>G-equation</h2>
+    <p class="law"><span class="m">∂G<span class="op">/</span>∂t<span class="op">+</span><span class="up"><b>u</b></span>·∇G<span class="op">=</span>S<sub>n</sub> |∇G|</span></p>
+    <div class="btns"><button id="simbtn" type="button">Simulate</button><button id="perturb" type="button">Perturb</button><span id="simread" class="read"></span></div>
+    <label class="check" for="useMark"><input id="useMark" type="checkbox" checked> Markstein; Clavin–Williams</label>
+    <p class="law sub"><span class="m">S<sub>n</sub><span class="op">=</span>S<sub>L</sub><span class="op">−</span>ℒ 𝒦</span>, V-shaped; <span class="m">L</span> and cusp arm above</p>
+    <label class="check" for="useAc"><input id="useAc" type="checkbox"> Searby; Sánchez-Sanz</label>
+    <p class="law sub"><span class="m">S<sub>n</sub><span class="op">=</span>S<sub>n</sub>(p, 𝒦)</span>: × (1 + <span class="m">ε</span> sin 2π<span class="m">f t</span>)</p>
+    <div class="row"><label for="acEps">pressure amplitude <span class="m">ε</span></label><output id="acEpsv">0.20</output><input id="acEps" type="range" min="0" max="0.6" step="0.01" value="0.2"></div>
+    <div class="row"><label for="acF">frequency, Hz</label><output id="acFv">300</output><input id="acF" type="range" min="20" max="2000" step="10" value="300"></div>
+    <label class="check" for="useShen"><input id="useShen" type="checkbox"> Shen–Zhou</label>
+    <p class="law sub"><span class="m">S<sub>n</sub><span class="op">=</span>S<sub>L</sub><sup>*</sup><span class="op">=</span>√(α Σ)</span> replaces <span class="m">S<sub>L</sub></span> as the base speed</p>
+    <div class="row"><label for="sigma">extinction strain <span class="m">Σ</span>, 1/s</label><output id="sigmav">2000</output><input id="sigma" type="range" min="100" max="20000" step="100" value="2000"></div>
+    <label class="check" for="useDaou"><input id="useDaou" type="checkbox"> Rajamanickam–Daou</label>
+    <p class="law sub"><span class="m">S<sub>n</sub><span class="op">=</span>S<sub>L</sub>(1<span class="op">−</span>ℳ<sub>c</sub> δ<sub>D</sub> 𝒦<span class="op">−</span>ℳ<sub>g</sub> n<sub>y</sub> …)</span>, three Markstein numbers under Darcy</p>
+    <div class="row"><label for="Mc">curvature number <span class="m">ℳ<sub>c</sub></span></label><output id="Mcv">0.00</output><input id="Mc" type="range" min="-3" max="3" step="0.05" value="0"></div>
+    <div class="row"><label for="Mg">gravity number <span class="m">ℳ<sub>g</sub></span></label><output id="Mgv">0.00</output><input id="Mg" type="range" min="-1" max="1" step="0.01" value="0"></div>
+    <div class="row"><label for="lamc">cut-off wavelength, mm</label><output id="lamcv">0.80</output><input id="lamc" type="range" min="0.4" max="5" step="0.05" value="0.8"></div>
+    <div class="row"><label for="simRate">flame ms per real second</label><output id="simRatev">20</output><input id="simRate" type="range" min="1" max="200" step="1" value="20"></div>
+    <details><summary>model</summary><p>Height-field form <span class="m">∂z<span class="op">/</span>∂t<span class="op">=</span>S<sub>n</sub>√(1<span class="op">+</span>|∇z|²)<span class="op">−</span>ν∇⁴z</span> on a 0.2 mm grid, explicit, upwind (Huygens) for the propagation term; the sheet is kept centred and the removed mean advance is <span class="m">S<sub>T</sub></span>. Darrieus–Landau and Joulin–Sivashinsky are the base case <span class="m">S<sub>n</sub><span class="op">=</span>S<sub>L</sub></span> (no box ticked). A negative Markstein length is anti-diffusive; the biharmonic term cuts it off below the cell scale, as in the Michelson–Sivashinsky equation. The Daou strain number needs the Darcy flow and is left out. Shape sliders set the initial condition and stop the run when moved.</p></details>
+  </div>
+  <div class="sec basis">
+    <h2>Surface basis</h2>
+    <p class="hint">Least-squares projection onto a tensor-product cubic B-spline: C² everywhere, curvature from the exact basis derivatives.</p>
+    <div class="row"><label for="knot">knot spacing, mm</label><output id="knotv">0.50</output><input id="knot" type="range" min="0.25" max="2" step="0.05" value="0.5"></div>
+    <label class="check" for="spline"><input id="spline" type="checkbox" checked> project onto B-splines</label>
+    <div class="read" id="nctrl"></div>
+  </div>
+  <div class="sec">
+    <div class="row"><label for="speed">playback speed</label><output id="speedv">1.00</output><input id="speed" type="range" min="0" max="3" step="0.05" value="1"></div>
+    <div class="btns"><button id="pause" type="button">Pause</button><button id="resetview" type="button">Reset view</button><button id="resetall" type="button">Flat flame</button></div>
+  </div>
+</div>
+
+<div class="histbox" id="histbox" hidden>
+  <div class="title">histogram of <span class="m">S<sub>T</sub><span class="op">/</span>S<sub>L</sub></span>, last 2000 frames</div>
+  <canvas id="hist" width="340" height="170"></canvas>
+</div>
+
+<div class="legend">
+  <div>local burning rate <span class="m">S<sub>d</sub><sup>*</sup><span class="op">/</span>S<sub>L</sub></span></div>
+  <div class="bar"></div>
+  <div class="ends"><span>0 · cold wall</span><span>1</span><span>3 · hottest</span></div>
+</div>
+
+<script src="vendor/three.r128.min.js"></script>
+<script>
+(function () {
+  let W = 20, H = 3;                         // channel width (x) and gap (y), mm (editable)
+  let CX = 5 - W / 2, CY = 2 - H / 2;        // the near wall (x = +5) and the top plate (y = +2) stay put as W, H change
+  const ZFAR = -70, ZNEAR = 16;
+  const NX = 160, NY = 40;                   // display mesh resolution
+  const canvas = document.getElementById('c');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x07070c);
+  scene.fog = new THREE.Fog(0x07070c, 18, 60);
+  const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 200);
+  const view = { yaw: 0.55, pitch: 0.28, dist: 17 }; const DEFAULT = { ...view };
+  const channel = new THREE.Group(); channel.position.set(CX, CY, 0); scene.add(channel);
+  function placeCamera() {
+    const cp = Math.cos(view.pitch), sp = Math.sin(view.pitch);
+    camera.position.set(view.dist * cp * Math.sin(view.yaw), view.dist * sp, view.dist * cp * Math.cos(view.yaw));
+    const tg = window.flameSim && window.flameSim.target; camera.lookAt(tg ? tg.x : 0, tg ? tg.y : 0, tg ? tg.z : 0);
+  }
+
+  // ---- colour scale: dark orange (cold wall) -> white (hottest), for rate in [0, 3]
+  const STOPS = [[0.0, 0x4a, 0x18, 0x00], [0.66, 0xa8, 0x38, 0x0a], [1.26, 0xff, 0x8c, 0x1a], [1.86, 0xff, 0xd1, 0x66], [2.46, 0xff, 0xf3, 0xc4], [3.0, 0xff, 0xff, 0xff]];
+  function rateColor(r, out) {
+    r = Math.max(0, Math.min(3, r));
+    let k = 0; while (k < STOPS.length - 2 && r > STOPS[k + 1][0]) k++;
+    const a = STOPS[k], b = STOPS[k + 1], u = (r - a[0]) / (b[0] - a[0]);
+    out[0] = (a[1] + (b[1] - a[1]) * u) / 255; out[1] = (a[2] + (b[2] - a[2]) * u) / 255; out[2] = (a[3] + (b[3] - a[3]) * u) / 255;
+  }
+
+  // ---- parameters
+  const P = { loss: 0, pe: 40, SL: 0.194, alpha: 30.8, amp: 0, pos: 0.5, tilt: 0, mark: 0, cusp: 0.5, cellR: 2.5, cellH: 0, seed: 7, speed: 1, spline: true, knot: 0.5,
+              useMark: true, useAc: false, acEps: 0.2, acF: 300, useShen: false, sigma: 2000, useDaou: false, Mc: 0, Mg: 0, lamc: 0.8, simRate: 20 };
+  const dQ = (sAd = 1) => P.pe * P.alpha / (P.SL * 1000 * sAd);   // quench-layer thickness in mm: Pe* alpha / S_d*
+  const dD = () => P.alpha / (P.SL * 1000);                           // diffusive thickness alpha / S_L, mm
+  const KMAX = 3;                                                      // curvature clamp, 1/mm
+
+  // ---- the local burning law S_n / S_L, shared by the static picture and the G-equation
+  //   base      : S_L, or Shen-Zhou's sqrt(alpha * Sigma_ext)
+  //   Markstein : V-shaped. Bulge arm 1 - L kappa+ ; cusp arm + L_c kappa-, with L_c = cusp * |L| when L < 0 (both arms rise,
+  //               so cusps are never pushed backwards) and L_c = L when L > 0 (the classical relation).
+  //   Daou      : - M_c delta_D kappa - M_g n_y  (three Markstein numbers under Darcy; the strain one needs the Darcy flow and is left out)
+  //   acoustic  : x (1 + eps sin 2 pi f t)
+  //   heat loss : isothermal walls, non-adiabatic relation m^2 ln m^2 = -Lambda, layer thickness Pe* alpha / S_ad
+  function snLaw(k, dWall, ny, t) {
+    snLaw.m = 1;
+    k = Math.max(-KMAX, Math.min(KMAX, k));
+    const q0 = P.loss > 0 ? Math.max(0, 1 - dWall / dQ()) : 0;      // no loss, no quench layer, no Markstein fade
+    const Leff = P.useMark ? P.mark * (1 - q0) : 0;
+    const kp = Math.max(k, 0), km = Math.max(-k, 0);
+    let f = 1 - Leff * kp + (Leff < 0 ? P.cusp * (-Leff) : Leff) * km;
+    if (P.useDaou) f += -P.Mc * dD() * k - P.Mg * ny;
+    if (P.useAc) f *= 1 + P.acEps * Math.sin(2 * Math.PI * P.acF * t);
+    const base = P.useShen ? Math.sqrt(P.alpha * P.sigma) / (P.SL * 1000) : 1;
+    const sAd = Math.max(0.05, base * f);
+    if (P.loss <= 0) return sAd;
+    const q = Math.max(0, 1 - dWall / dQ(sAd));
+    const nq = 0.5 + 5 * (1 - P.loss);
+    const lam = (1.0001 / Math.E) * Math.pow(q, nq) / (sAd * sAd);
+    let m = 1;
+    if (lam > 1 / Math.E) m = 0;
+    else if (lam > 0) { let lo = Math.exp(-0.5), hi = 1; for (let it = 0; it < 20; it++) { const mid = 0.5 * (lo + hi); if (mid * mid * Math.log(mid * mid) < -lam) lo = mid; else hi = mid; } m = 0.5 * (lo + hi); }
+    const pin = 1 - Math.pow(q, 10);
+    snLaw.m = m * pin;
+    return Math.max(0.02, m * sAd * pin);
+  }
+
+  // ---- the display mesh: vertices on an (x, y) grid, displaced in z; vertex colours = local rate (with hand shading)
+  const geom = new THREE.PlaneGeometry(W, H, NX, NY);
+  const pos = geom.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  geom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const sheet = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+  channel.add(sheet);
+  const nx = NX + 1, ny = NY + 1;
+  const x0 = new Float32Array(pos.count), y0 = new Float32Array(pos.count), u0 = new Float32Array(pos.count), v0 = new Float32Array(pos.count);
+  for (let i = 0; i < pos.count; i++) { u0[i] = pos.getX(i) / W; v0[i] = pos.getY(i) / H; }
+  function applyDims() {
+    CX = 5 - W / 2; CY = 2 - H / 2; channel.position.set(CX, CY, 0);
+    for (let i = 0; i < pos.count; i++) { x0[i] = u0[i] * W; y0[i] = v0[i] * H; pos.setX(i, x0[i]); pos.setY(i, y0[i]); }
+    splineCache.clear();
+    rebuildWire();
+  }
+  const LIGHT = new THREE.Vector3(0.35, 0.6, 1).normalize();
+  const tmpN = new THREE.Vector3(), tmpC = [0, 0, 0];
+  const readA = document.getElementById('rA'), readI = document.getElementById('rI'), readS = document.getElementById('rS');
+  let ST = 1;
+
+  // ---- static composition: finger + cells + wall lag + tilt, as a function of (x, y)
+  const U0 = 0.55;
+  function cellShape(x) {
+    const xc = (P.pos - 0.5) * W, hw = W / 2, u = Math.abs(x - xc) / hw;
+    return u <= U0 ? 1 - u * u : 1 - U0 * U0 - 2 * U0 * (u - U0);
+  }
+  function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  let cellPts = [];
+  function seedCells() {
+    const r = P.cellR, inset = P.loss > 0 ? Math.min(dQ(), H / 2 - 0.05, W / 2 - 0.05) : 0.2;
+    const x1 = -W / 2 + inset, x2 = W / 2 - inset;
+    let y1 = -H / 2 + inset, y2 = H / 2 - inset;
+    if (y2 - y1 < 0.05) { y1 = y2 = 0; }
+    const rnd = mulberry32(P.seed), pts = [], active = [];
+    const cs = r / Math.SQRT2, gw = Math.max(1, Math.ceil((x2 - x1) / cs)), gh = Math.max(1, Math.ceil((y2 - y1) / cs)), grid = new Int32Array(gw * gh).fill(-1);
+    const fits = (x, y) => {
+      if (x < x1 || x > x2 || y < y1 || y > y2) return false;
+      const gx = Math.floor((x - x1) / cs), gy = Math.floor((y - y1) / cs);
+      for (let j = Math.max(0, gy - 2); j <= Math.min(gh - 1, gy + 2); j++) for (let i = Math.max(0, gx - 2); i <= Math.min(gw - 1, gx + 2); i++) {
+        const k = grid[j * gw + i]; if (k >= 0 && Math.hypot(pts[k][0] - x, pts[k][1] - y) < r) return false;
+      }
+      return true;
+    };
+    const add = (x, y) => { const k = pts.length; pts.push([x, y]); active.push(k); grid[Math.min(gh - 1, Math.floor((y - y1) / cs)) * gw + Math.min(gw - 1, Math.floor((x - x1) / cs))] = k; };
+    add(x1 + rnd() * (x2 - x1), y1 + rnd() * (y2 - y1));
+    while (active.length) {
+      const ai = Math.floor(rnd() * active.length), [px, py] = pts[active[ai]]; let placed = false;
+      for (let n = 0; n < 30; n++) {
+        const ang = rnd() * 2 * Math.PI, d = r * (1 + rnd());
+        const x = px + d * Math.cos(ang), y = Math.max(y1, Math.min(y2, py + d * Math.sin(ang)));
+        if (fits(x, y)) { add(x, y); placed = true; break; }
+      }
+      if (!placed) active.splice(ai, 1);
+    }
+    cellPts = pts;
+  }
+  function cellZ(x, y) {
+    if (P.cellH <= 0) return 0;
+    let best = -1e9; const r2 = P.cellR * P.cellR;
+    for (const [cx, cy] of cellPts) { const dx = x - cx, dy = y - cy; const z = P.cellH * (1 - (dx * dx + dy * dy) / r2); if (z > best) best = z; }
+    return best;
+  }
+  function composeAt(x, y, meanShape, czMean) {
+    const dWall = Math.min(H / 2 - Math.abs(y), W / 2 - Math.abs(x));
+    const q = Math.max(0, 1 - dWall / dQ());
+    const lag = -1.8 * P.loss * q * q;
+    const lean = Math.tan(P.tilt * Math.PI / 180) * y;
+    return P.amp * (cellShape(x) - meanShape) + (cellZ(x, y) - czMean) + lag + lean;
+  }
+  function composeOnGrid(xs, ys, out) {                               // fills out[j * xs.length + i]
+    let meanShape = 0; for (const x of xs) meanShape += cellShape(x); meanShape /= xs.length;
+    let czMean = 0; for (const y of ys) for (const x of xs) czMean += cellZ(x, y); czMean /= xs.length * ys.length;
+    for (let j = 0; j < ys.length; j++) for (let i = 0; i < xs.length; i++) out[j * xs.length + i] = composeAt(xs[i], ys[j], meanShape, czMean);
+  }
+
+  // ---- cubic B-spline machinery: clamped uniform knots, Cox-de Boor basis with exact second derivatives, LS projectors
+  function bsplineRows(samples, a, b, nctrl) {
+    const p = 3, nk = nctrl + p + 1, t = new Float64Array(nk);
+    for (let i = 0; i < nk; i++) t[i] = i <= p ? a : i >= nk - p - 1 ? b : a + (b - a) * (i - p) / (nctrl - p);
+    const B = new Float64Array(samples.length * nctrl), B2 = new Float64Array(samples.length * nctrl);
+    const N = [];
+    for (let s = 0; s < samples.length; s++) {
+      const u = Math.min(Math.max(samples[s], a), b - 1e-12);
+      let n0 = new Float64Array(nk - 1); for (let i = 0; i < nk - 1; i++) n0[i] = (u >= t[i] && u < t[i + 1]) ? 1 : 0;
+      N[0] = n0;
+      for (let d = 1; d <= p; d++) {
+        const prev = N[d - 1], cur = new Float64Array(nk - d - 1);
+        for (let i = 0; i < nk - d - 1; i++) {
+          const l = (t[i + d] - t[i]) > 0 ? (u - t[i]) / (t[i + d] - t[i]) * prev[i] : 0;
+          const r = (t[i + d + 1] - t[i + 1]) > 0 ? (t[i + d + 1] - u) / (t[i + d + 1] - t[i + 1]) * prev[i + 1] : 0;
+          cur[i] = l + r;
+        }
+        N[d] = cur;
+      }
+      const n1 = N[1];
+      const d2 = new Float64Array(nk - 3);
+      for (let i = 0; i < nk - 3; i++) {
+        const l = (t[i + 2] - t[i]) > 0 ? 2 * n1[i] / (t[i + 2] - t[i]) : 0;
+        const r = (t[i + 3] - t[i + 1]) > 0 ? 2 * n1[i + 1] / (t[i + 3] - t[i + 1]) : 0;
+        d2[i] = l - r;
+      }
+      for (let i = 0; i < nctrl; i++) {
+        B[s * nctrl + i] = N[3][i];
+        const l = (t[i + 3] - t[i]) > 0 ? 3 * d2[i] / (t[i + 3] - t[i]) : 0;
+        const r = (t[i + 4] - t[i + 1]) > 0 ? 3 * d2[i + 1] / (t[i + 4] - t[i + 1]) : 0;
+        B2[s * nctrl + i] = l - r;
+      }
+      if (u >= b - 1e-12) { B[s * nctrl + nctrl - 1] = 1; }
+    }
+    return { B, B2 };
+  }
+  function lsProjector(B, m, n) {
+    const A = new Float64Array(n * n);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) { let s = 0; for (let k = 0; k < m; k++) s += B[k * n + i] * B[k * n + j]; A[i * n + j] = s + (i === j ? 1e-9 : 0); }
+    const inv = new Float64Array(n * n); for (let i = 0; i < n; i++) inv[i * n + i] = 1;
+    for (let c = 0; c < n; c++) {
+      let piv = c; for (let r = c + 1; r < n; r++) if (Math.abs(A[r * n + c]) > Math.abs(A[piv * n + c])) piv = r;
+      if (piv !== c) for (let k = 0; k < n; k++) { let tmp = A[c * n + k]; A[c * n + k] = A[piv * n + k]; A[piv * n + k] = tmp; tmp = inv[c * n + k]; inv[c * n + k] = inv[piv * n + k]; inv[piv * n + k] = tmp; }
+      const d = A[c * n + c];
+      for (let k = 0; k < n; k++) { A[c * n + k] /= d; inv[c * n + k] /= d; }
+      for (let r = 0; r < n; r++) if (r !== c) { const f = A[r * n + c]; if (f) for (let k = 0; k < n; k++) { A[r * n + k] -= f * A[c * n + k]; inv[r * n + k] -= f * inv[c * n + k]; } }
+    }
+    const Pm = new Float64Array(m * n);
+    for (let k = 0; k < m; k++) for (let j = 0; j < n; j++) { let s = 0; for (let i = 0; i < n; i++) s += B[k * n + i] * inv[i * n + j]; Pm[k * n + j] = s; }
+    return Pm;
+  }
+  const splineCache = new Map();
+  function splineOps(xsFit, ysFit) {                                   // fit from (xsFit, ysFit) samples, evaluate on the display grid
+    const key = [P.knot, W, H, xsFit.length, ysFit.length].join('|');
+    if (splineCache.has(key)) return splineCache.get(key);
+    const ncx = Math.max(4, Math.round(W / P.knot) + 3), ncy = Math.max(4, Math.round(H / P.knot) + 3);
+    const fx = bsplineRows(xsFit, -W / 2, W / 2, ncx), fy = bsplineRows(ysFit, -H / 2, H / 2, ncy);
+    const xs = Array.from({ length: nx }, (_, i) => x0[i]), ys = Array.from({ length: ny }, (_, j) => y0[j * nx]);
+    const ex = bsplineRows(xs, -W / 2, W / 2, ncx), ey = bsplineRows(ys, -H / 2, H / 2, ncy);
+    const ops = { ncx, ncy, Px: lsProjector(fx.B, xsFit.length, ncx), Py: lsProjector(fy.B, ysFit.length, ncy), Bx: ex.B, Bxx: ex.B2, By: ey.B, Byy: ey.B2, mfx: xsFit.length, mfy: ysFit.length };
+    splineCache.set(key, ops); return ops;
+  }
+  // project samples z (mfy x mfx) onto the spline and evaluate z, z_xx, z_yy on the display grid
+  function splineToDisplay(zf, ops, zout, kout) {
+    const { ncx, ncy, Px, Py, Bx, Bxx, By, Byy, mfx, mfy } = ops;
+    const G = new Float64Array(mfy * ncx);
+    for (let j = 0; j < mfy; j++) for (let a = 0; a < ncx; a++) { let s = 0; for (let i = 0; i < mfx; i++) s += zf[j * mfx + i] * Px[i * ncx + a]; G[j * ncx + a] = s; }
+    const C = new Float64Array(ncy * ncx);
+    for (let b = 0; b < ncy; b++) for (let a = 0; a < ncx; a++) { let s = 0; for (let j = 0; j < mfy; j++) s += Py[j * ncy + b] * G[j * ncx + a]; C[b * ncx + a] = s; }
+    const T = new Float64Array(ny * ncx), Tyy = new Float64Array(ny * ncx);
+    for (let j = 0; j < ny; j++) for (let a = 0; a < ncx; a++) {
+      let s = 0, syy = 0;
+      for (let b = 0; b < ncy; b++) { const c = C[b * ncx + a]; s += By[j * ncy + b] * c; syy += Byy[j * ncy + b] * c; }
+      T[j * ncx + a] = s; Tyy[j * ncx + a] = syy;
+    }
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      let z = 0, zxx = 0, zyy = 0;
+      for (let a = 0; a < ncx; a++) { const bx = Bx[i * ncx + a]; z += bx * T[j * ncx + a]; zxx += Bxx[i * ncx + a] * T[j * ncx + a]; zyy += bx * Tyy[j * ncx + a]; }
+      const k = j * nx + i; zout[k] = z; kout[k] = -(zxx + zyy);
+    }
+    return ncx + ' × ' + ncy + ' control points, cubic, C²';
+  }
+
+  // ---- render a surface on the display grid: geometry, curvature-driven colour, readouts
+  const zd = new Float64Array(pos.count), kd = new Float32Array(pos.count), rate = new Float32Array(pos.count);
+  function renderSurface(zf, ops, tNow) {
+    let note;
+    if (ops) note = splineToDisplay(zf, ops, zd, kd);
+    else {                                                              // raw composition on the display grid, FD curvature
+      const dx = W / NX, dy = H / NY;
+      for (let i = 0; i < pos.count; i++) zd[i] = zf[i];
+      for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+        const k = j * nx + i, z = zd[k];
+        const zl = zd[j * nx + Math.max(i - 1, 0)], zr = zd[j * nx + Math.min(i + 1, nx - 1)];
+        const zb = zd[Math.max(j - 1, 0) * nx + i], zu = zd[Math.min(j + 1, ny - 1) * nx + i];
+        const zxx = (i > 0 && i < nx - 1) ? (zr - 2 * z + zl) / (dx * dx) : 0, zyy = (j > 0 && j < ny - 1) ? (zu - 2 * z + zb) / (dy * dy) : 0;
+        kd[k] = -(zxx + zyy);
+      }
+      note = 'raw composition (C⁰ at the cusps), finite-difference curvature';
+    }
+    document.getElementById('nctrl').textContent = note;
+    for (let i = 0; i < pos.count; i++) pos.setZ(i, zd[i]);
+    pos.needsUpdate = true; geom.computeVertexNormals();
+    const nrm = geom.attributes.normal;
+    const dy = H / NY;
+    let kmin = 1e9, kmax = -1e9;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+      const k = j * nx + i, x = x0[k], y = y0[k];
+      const zb = zd[Math.max(j - 1, 0) * nx + i], zu = zd[Math.min(j + 1, ny - 1) * nx + i];
+      const zy = (zu - zb) / (dy * ((j > 0 && j < ny - 1) ? 2 : 1));
+      const nyc = -zy / Math.sqrt(1 + zy * zy);
+      const dWall = Math.min(H / 2 - Math.abs(y), W / 2 - Math.abs(x));
+      const kk = Math.max(-KMAX, Math.min(KMAX, kd[k])); kmin = Math.min(kmin, kk); kmax = Math.max(kmax, kk);
+      rate[k] = snLaw(kd[k], dWall, nyc, tNow);
+    }
+    // area ratio and area-weighted mean rate over the triangles
+    const idx = geom.index.array;
+    let area = 0, rateArea = 0;
+    const pa = new THREE.Vector3(), pb = new THREE.Vector3(), pc = new THREE.Vector3(), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+      pa.fromBufferAttribute(pos, a); pb.fromBufferAttribute(pos, b); pc.fromBufferAttribute(pos, c);
+      e1.subVectors(pb, pa); e2.subVectors(pc, pa);
+      const tri = e1.cross(e2).length() / 2;
+      area += tri; rateArea += tri * (rate[a] + rate[b] + rate[c]) / 3;
+    }
+    const A = area / (W * H), I0 = rateArea / area;
+    { const jm = Math.floor(ny / 2); let Lc = 0; const dxg = W / NX;
+      for (let i = 1; i < nx; i++) { const dz = zd[jm * nx + i] - zd[jm * nx + i - 1]; Lc += Math.sqrt(dxg * dxg + dz * dz); }
+      window.flameSim.metrics = { A, I0, L: Lc, areaT: area, area0: W * H, W, H }; }
+    if (!sim.on) ST = A * I0;
+    readA.textContent = A.toFixed(2); readI.textContent = (sim.on ? ST / A : I0).toFixed(2); readS.textContent = ST.toFixed(2);
+    document.getElementById('ncells').textContent = P.cellH > 0 ? cellPts.length + ' cells seeded' : '';
+    document.getElementById('krange').innerHTML = '<span class="m">κ</span> from ' + kmin.toFixed(2) + ' to ' + kmax.toFixed(2) + ' mm<sup>−1</sup>';
+    document.getElementById('dq').innerHTML = '<span class="m">δ<sub>D</sub><span class="op">=</span>α<span class="op">/</span>S<sub>L</sub></span> = ' + dD().toFixed(3) + ' mm &nbsp;·&nbsp; <span class="m">δ<sub>q</sub></span> = ' + dQ().toFixed(2) + ' mm per wall at <span class="m">S<sub>d</sub><sup>*</sup><span class="op">=</span>S<sub>L</sub></span>';
+    for (let i = 0; i < pos.count; i++) {
+      rateColor(rate[i], tmpC);
+      tmpN.fromBufferAttribute(nrm, i);
+      const shade = 0.72 + 0.28 * Math.max(0, tmpN.dot(LIGHT));
+      colors[3 * i] = tmpC[0] * shade; colors[3 * i + 1] = tmpC[1] * shade; colors[3 * i + 2] = tmpC[2] * shade;
+    }
+    geom.attributes.color.needsUpdate = true;
+  }
+  const ztDisp = new Float64Array(pos.count);
+  function rebuildSheet() {                                            // the static picture
+    if (sim.on) return;
+    const xs = Array.from({ length: nx }, (_, i) => x0[i]), ys = Array.from({ length: ny }, (_, j) => y0[j * nx]);
+    composeOnGrid(xs, ys, ztDisp);
+    renderSurface(ztDisp, P.spline ? splineOps(xs, ys) : null, 0);
+  }
+
+  // ---- G-equation: dz/dt = S_n sqrt(1 + |grad z|^2) - nu grad^4 z on a coarse sim grid (0.2 mm), explicit, upwind for the
+  //      Huygens term, central differences for the curvature. The sheet is kept centred (mean removed each step) and the
+  //      removed mean advance is S_T. The biharmonic term is the small-scale cutoff that a negative Markstein length needs.
+  const HS = 0.2;
+  const sim = { on: false, t: 0, nxs: 0, nys: 0, z: null, zn: null, lap: null, dead: null, xs: null, ys: null, hist: [], dtLast: 0, nsub: 0 };
+  window.flameSim = { P, sim, metrics: null };                       // inspection + scripted driving
+  window.flameSim.set = (k, v) => { P[k] = v; };
+  window.flameSim.rebuild = () => rebuildSheet();
+  function simInit() {
+    sim.nxs = Math.max(8, Math.round(W / HS) + 1); sim.nys = Math.max(5, Math.round(H / HS) + 1);
+    sim.xs = Array.from({ length: sim.nxs }, (_, i) => -W / 2 + W * i / (sim.nxs - 1));
+    sim.ys = Array.from({ length: sim.nys }, (_, j) => -H / 2 + H * j / (sim.nys - 1));
+    sim.z = new Float64Array(sim.nxs * sim.nys); sim.zn = new Float64Array(sim.z.length); sim.lap = new Float64Array(sim.z.length); sim.dead = new Uint8Array(sim.z.length);
+    composeOnGrid(sim.xs, sim.ys, sim.z);
+    simPerturb(0.02);
+    sim.t = 0; sim.hist = [];
+  }
+  function simPerturb(ampl) {
+    const rnd = mulberry32((P.seed * 7919 + Math.floor(sim.t * 1e6)) | 0);
+    for (let i = 0; i < sim.z.length; i++) sim.z[i] += ampl * (rnd() - 0.5);
+  }
+  function simStep() {
+    const { nxs, nys, z, zn, lap, dead, xs, ys } = sim;
+    const h = W / (nxs - 1), hy = H / (nys - 1), SL = P.SL * 1000;     // mm, mm, mm/s
+    const nu = SL * (Math.abs(P.useMark ? P.mark : 0) + 0.1 * h) * Math.pow(P.lamc / (2 * Math.PI), 2);
+    const at = (i, j) => z[Math.min(Math.max(j, 0), nys - 1) * nxs + Math.min(Math.max(i, 0), nxs - 1)];
+    // Laplacian (for the biharmonic term)
+    for (let j = 0; j < nys; j++) for (let i = 0; i < nxs; i++) {
+      lap[j * nxs + i] = (at(i + 1, j) - 2 * at(i, j) + at(i - 1, j)) / (h * h) + (at(i, j + 1) - 2 * at(i, j) + at(i, j - 1)) / (hy * hy);
+    }
+    const lapAt = (i, j) => lap[Math.min(Math.max(j, 0), nys - 1) * nxs + Math.min(Math.max(i, 0), nxs - 1)];
+    let smax = 0.05, gmax = 0;
+    let advSum = 0;
+    for (let j = 0; j < nys; j++) for (let i = 0; i < nxs; i++) {
+      const c = at(i, j);
+      const dxm = (c - at(i - 1, j)) / h, dxp = (at(i + 1, j) - c) / h, dym = (c - at(i, j - 1)) / hy, dyp = (at(i, j + 1) - c) / hy;
+      // upwind gradient for a front advancing toward +z: troughs (cusps) take both one-sided slopes, peaks take none
+      const g2 = Math.pow(Math.min(dxm, 0), 2) + Math.pow(Math.max(dxp, 0), 2) + Math.pow(Math.min(dym, 0), 2) + Math.pow(Math.max(dyp, 0), 2);
+      // mean curvature from central differences, > 0 where the sheet bulges toward the fresh gas
+      const zx = (at(i + 1, j) - at(i - 1, j)) / (2 * h), zy = (at(i, j + 1) - at(i, j - 1)) / (2 * hy);
+      const zxx = (at(i + 1, j) - 2 * c + at(i - 1, j)) / (h * h), zyy = (at(i, j + 1) - 2 * c + at(i, j - 1)) / (hy * hy);
+      const zxy = (at(i + 1, j + 1) - at(i - 1, j + 1) - at(i + 1, j - 1) + at(i - 1, j - 1)) / (4 * h * hy);
+      const g = 1 + zx * zx + zy * zy;
+      const kap = -((1 + zy * zy) * zxx - 2 * zx * zy * zxy + (1 + zx * zx) * zyy) / Math.pow(g, 1.5);
+      const nyc = -zy / Math.sqrt(1 + zy * zy);
+      const dWall = Math.min(H / 2 - Math.abs(ys[j]), W / 2 - Math.abs(xs[i]));
+      const s = SL * snLaw(kap, dWall, nyc, sim.t);                     // mm/s along the normal (the colour value)
+      dead[j * nxs + i] = snLaw.m < 0.5 ? 1 : 0;                        // quenched: the dead layer next to a cold wall
+      // Geometry: a quenched patch is a dead layer the live front drags along, not an anchor. Floor the propagation
+      // speed at 0.75 S_L so the trailing edge at the walls settles at a finite lag instead of running away.
+      const sg = P.loss > 0 ? Math.max(s, 0.75 * SL) : s;
+      const adv = sg * Math.sqrt(1 + g2);
+      const bih = (lapAt(i + 1, j) - 2 * lapAt(i, j) + lapAt(i - 1, j)) / (h * h) + (lapAt(i, j + 1) - 2 * lapAt(i, j) + lapAt(i, j - 1)) / (hy * hy);
+      zn[j * nxs + i] = adv - nu * bih;                                  // dz/dt
+      advSum += adv; smax = Math.max(smax, sg); gmax = Math.max(gmax, g2);
+    }
+    const hmin = Math.min(h, hy);
+    const D = SL * Math.abs(P.useMark ? P.mark : 0) + 1e-9;
+    const dt = Math.min(0.35 * hmin / (smax * Math.sqrt(1 + gmax)), 0.2 * hmin * hmin / D, Math.pow(hmin, 4) / (40 * nu + 1e-12), 2e-4);   // explicit biharmonic limit in 2-D is h^4 / (32 nu)
+    const mean = advSum / z.length;
+    let m2 = 0;
+    for (let i = 0; i < z.length; i++) { z[i] += dt * zn[i]; m2 += z[i]; }
+    m2 /= z.length;
+    for (let i = 0; i < z.length; i++) z[i] -= m2;                      // flame-fixed frame: the removed mean advance is S_T
+    // The dead layer rides along with the live front: inside it the sheet is continued from the last live point toward the
+    // wall with a 45-degree trailing slope, so quenched gas neither anchors the front nor manufactures flame area.
+    for (let i = 0; i < nxs; i++) {
+      let j1 = -1, j2 = -1;
+      for (let j = 0; j < nys; j++) if (!dead[j * nxs + i]) { if (j1 < 0) j1 = j; j2 = j; }
+      if (j1 < 0) continue;
+      for (let j = 0; j < j1; j++) z[j * nxs + i] = z[j1 * nxs + i] - (j1 - j) * hy;
+      for (let j = j2 + 1; j < nys; j++) z[j * nxs + i] = z[j2 * nxs + i] - (j - j2) * hy;
+    }
+    for (let j = 0; j < nys; j++) {
+      let i1 = -1, i2 = -1;
+      for (let i = 0; i < nxs; i++) if (!dead[j * nxs + i]) { if (i1 < 0) i1 = i; i2 = i; }
+      if (i1 < 0) continue;
+      for (let i = 0; i < i1; i++) z[j * nxs + i] = z[j * nxs + i1] - (i1 - i) * h;
+      for (let i = i2 + 1; i < nxs; i++) z[j * nxs + i] = z[j * nxs + i2] - (i - i2) * h;
+    }
+    sim.t += dt; sim.dtLast = dt;
+    return mean / SL;                                                   // S_T / S_L for this step
+  }
+  function simFrame(realDt) {
+    const target = P.simRate * 1e-3 * realDt;                           // flame time to cover this frame
+    let covered = 0, n = 0, stSum = 0;
+    while (covered < target && n < 80) { const st = simStep(); stSum += st * sim.dtLast; covered += sim.dtLast; n++; }
+    sim.nsub = n;
+    ST = covered > 0 ? stSum / covered : ST;
+    sim.hist.push(ST); if (sim.hist.length > 2000) sim.hist.shift();
+    renderSurface(sim.z, splineOps(sim.xs, sim.ys), sim.t);
+    document.getElementById('simread').textContent = 't = ' + (sim.t * 1000).toFixed(1) + ' ms · ' + n + ' substeps of ' + (sim.dtLast * 1e6).toFixed(0) + ' µs' + (n >= 80 ? ' (rate-limited)' : '');
+    drawHist();
+  }
+  // ---- histogram of S_T/S_L over the last 2000 frames
+  const hc = document.getElementById('hist'), hctx = hc.getContext('2d');
+  function drawHist() {
+    const w = hc.width, h = hc.height; hctx.clearRect(0, 0, w, h);
+    const v = sim.hist; if (!v.length) return;
+    let lo = Math.min(...v), hi = Math.max(...v); if (hi - lo < 0.2) { const c = 0.5 * (lo + hi); lo = c - 0.1; hi = c + 0.1; }
+    lo = Math.floor(lo * 10) / 10; hi = Math.ceil(hi * 10) / 10;
+    const nb = 24, bins = new Array(nb).fill(0);
+    for (const x of v) bins[Math.min(nb - 1, Math.floor((x - lo) / (hi - lo) * nb))]++;
+    const bmax = Math.max(...bins), L = 34, R = 10, T = 10, B = 26, pw = w - L - R, ph = h - T - B;
+    hctx.strokeStyle = '#262634'; hctx.lineWidth = 1; hctx.strokeRect(L + 0.5, T + 0.5, pw, ph);
+    hctx.fillStyle = '#ffb300';
+    for (let b = 0; b < nb; b++) { const bh = bins[b] / bmax * ph; hctx.fillRect(L + b * pw / nb + 1, T + ph - bh, pw / nb - 2, bh); }
+    const mean = v.reduce((a, b) => a + b, 0) / v.length;
+    const xm = L + (mean - lo) / (hi - lo) * pw, xc = L + (v[v.length - 1] - lo) / (hi - lo) * pw;
+    hctx.strokeStyle = '#ffffff'; hctx.beginPath(); hctx.moveTo(xc, T); hctx.lineTo(xc, T + ph); hctx.stroke();
+    hctx.strokeStyle = '#9a9aaa'; hctx.setLineDash([3, 3]); hctx.beginPath(); hctx.moveTo(xm, T); hctx.lineTo(xm, T + ph); hctx.stroke(); hctx.setLineDash([]);
+    hctx.fillStyle = '#9a9aaa'; hctx.font = '11px IBM Plex Sans, sans-serif'; hctx.textAlign = 'center';
+    for (let k = 0; k <= 4; k++) { const x = lo + (hi - lo) * k / 4; hctx.fillText(x.toFixed(2), L + k * pw / 4, h - 8); }
+    hctx.textAlign = 'left'; hctx.fillText('n = ' + v.length, L + 4, T + 12);
+    hctx.textAlign = 'right'; hctx.fillStyle = '#ececf2'; hctx.fillText('mean ' + mean.toFixed(2) + ' · now ' + v[v.length - 1].toFixed(2), w - R - 2, T + 12);
+    hctx.save(); hctx.translate(10, T + ph / 2); hctx.rotate(-Math.PI / 2); hctx.textAlign = 'center'; hctx.fillStyle = '#9a9aaa'; hctx.fillText('frames', 0, 0); hctx.restore();
+  }
+  function startSim() { simInit(); sim.on = true; document.getElementById('simbtn').textContent = 'Stop'; document.getElementById('histbox').hidden = false; document.getElementById('spline').disabled = true; }
+  function stopSim() { sim.on = false; document.getElementById('simbtn').textContent = 'Simulate'; document.getElementById('histbox').hidden = true; document.getElementById('spline').disabled = false; document.getElementById('simread').textContent = ''; rebuildSheet(); }
+
+  // ---- channel wireframe: fixed edges + rings that slide away at the flame's speed
+  const edgeMat = new THREE.LineBasicMaterial({ color: 0x5a5a72 });
+  const edgeGeom = new THREE.BufferGeometry(), ringGeom = new THREE.BufferGeometry();
+  function rebuildWire() {
+    const edges = [];
+    for (const [x, y] of [[-W / 2, -H / 2], [W / 2, -H / 2], [W / 2, H / 2], [-W / 2, H / 2]]) edges.push(new THREE.Vector3(x, y, ZFAR), new THREE.Vector3(x, y, ZNEAR));
+    edgeGeom.setFromPoints(edges);
+    ringGeom.setFromPoints([new THREE.Vector3(-W / 2, -H / 2, 0), new THREE.Vector3(W / 2, -H / 2, 0), new THREE.Vector3(W / 2, H / 2, 0), new THREE.Vector3(-W / 2, H / 2, 0), new THREE.Vector3(-W / 2, -H / 2, 0)]);
+  }
+  rebuildWire();
+  channel.add(new THREE.LineSegments(edgeGeom, edgeMat));
+  const freshMat = new THREE.LineBasicMaterial({ color: 0x5ba8e8, transparent: true, opacity: 0.85 });
+  const burntMat = new THREE.LineBasicMaterial({ color: 0xc96a5a, transparent: true, opacity: 0.85 });
+  const SPACING = 2, rings = new THREE.Group(); channel.add(rings);
+  for (let z = ZFAR; z <= ZNEAR; z += SPACING) { const r = new THREE.Line(ringGeom, freshMat); r.userData.z0 = z; rings.add(r); }
+
+  // ---- animation loop
+  let paused = false, offset = 0, last = performance.now();
+  window.flameSim.drive = (ringOffset, viewShift) => {               // deterministic frame for video capture
+    paused = true; offset = ringOffset % SPACING;
+    for (const r of rings.children) { let z = r.userData.z0 - offset; if (z < ZFAR) z += (ZNEAR - ZFAR); r.position.z = z; r.material = z > 0 ? freshMat : burntMat; }
+    const w = canvas.clientWidth, h = canvas.clientHeight; camera.aspect = w / h; camera.setViewOffset(w, h, viewShift * w, 0, w, h); camera.updateProjectionMatrix();
+    placeCamera(); renderer.render(scene, camera);
+  };
+  window.flameSim.view = view;
+
+  // ---- engineering-drawing dimension lines (video stills): bold white lines with arrowheads, extension lines from the
+  //      sheet, a break for the value. h to the right of the near wall, L projected above the top plate.
+  const dimGroup = new THREE.Group(); channel.add(dimGroup);
+  const dimLabels = []; let dimOpts = null;
+  const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff }), greyMat = new THREE.MeshBasicMaterial({ color: 0x9a9aaa }), dimMat = new THREE.MeshBasicMaterial({ color: 0x6c6c7c });
+  function tube(pts, r, mat) {
+    if (pts.length < 2) return;
+    const curve = new THREE.CatmullRomCurve3(pts.map(p => new THREE.Vector3(...p)), false, 'catmullrom', 0.0);
+    dimGroup.add(new THREE.Mesh(new THREE.TubeGeometry(curve, Math.max(2, pts.length * 2), r, 8, false), mat));
+  }
+  function cone(tip, dir, len, rad, mat) {
+    const g = new THREE.ConeGeometry(rad, len, 16); const m = new THREE.Mesh(g, mat);
+    const d = new THREE.Vector3(...dir).normalize(); m.position.set(tip[0] - d.x * len / 2, tip[1] - d.y * len / 2, tip[2] - d.z * len / 2);
+    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d); dimGroup.add(m);
+  }
+  function dimLine(pts, labelAt, r = 0.07, mat = whiteMat, gap = 1.2) {    // polyline with arrows at both ends and a break at labelAt (index fraction)
+    let len = 0; const cum = [0];
+    for (let i = 1; i < pts.length; i++) { len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1], pts[i][2] - pts[i - 1][2]); cum.push(len); }
+    const mid = labelAt * len, a = mid - gap / 2, b = mid + gap / 2;
+    const atLen = L => { let k = 0; while (k < cum.length - 2 && cum[k + 1] < L) k++; const f = (L - cum[k]) / Math.max(cum[k + 1] - cum[k], 1e-9); const P0 = pts[k], P1 = pts[k + 1]; return [P0[0] + f * (P1[0] - P0[0]), P0[1] + f * (P1[1] - P0[1]), P0[2] + f * (P1[2] - P0[2])]; };
+    const seg1 = pts.filter((_, i) => cum[i] < a).concat([atLen(a)]), seg2 = [atLen(b)].concat(pts.filter((_, i) => cum[i] > b));
+    tube(seg1, r, mat); tube(seg2, r, mat);
+    const d0 = [pts[0][0] - pts[1][0], pts[0][1] - pts[1][1], pts[0][2] - pts[1][2]];
+    const n = pts.length - 1, d1 = [pts[n][0] - pts[n - 1][0], pts[n][1] - pts[n - 1][1], pts[n][2] - pts[n - 1][2]];
+    cone(pts[0], d0, 0.7, 0.2, mat); cone(pts[n], d1, 0.7, 0.2, mat);
+    // label anchor: point at arc-length mid
+    let k = 0; while (k < cum.length - 1 && cum[k + 1] < mid) k++;
+    const f = (mid - cum[k]) / Math.max(cum[k + 1] - cum[k], 1e-9), P0 = pts[k], P1 = pts[k + 1];
+    return { len, anchor: [P0[0] + f * (P1[0] - P0[0]), P0[1] + f * (P1[1] - P0[1]), P0[2] + f * (P1[2] - P0[2])] };
+  }
+  window.flameSim.buildDims = (opts) => {
+    dimOpts = opts;
+    while (dimGroup.children.length) dimGroup.remove(dimGroup.children[0]);
+    dimLabels.length = 0;
+    if (!opts) return;
+    const jm = Math.floor(ny / 2), OFF = 2.4, UP = 1.8;
+    // h: the near-wall edge of the sheet (column i = nx-1), offset outward in x
+    const edge = []; for (let j = 0; j < ny; j++) edge.push([W / 2 + OFF, y0[j * nx + nx - 1], zd[j * nx + nx - 1]]);
+    edge.sort((p, q) => p[1] - q[1]);
+    const jTop = y0[0] > y0[(ny - 1) * nx] ? 0 : ny - 1, jBot = ny - 1 - jTop;        // PlaneGeometry rows run top to bottom
+    const zTop = zd[jTop * nx + nx - 1], zBot = zd[jBot * nx + nx - 1], yTop = y0[jTop * nx + nx - 1], yBot = y0[jBot * nx + nx - 1];
+    // extension lines from the sheet corners outward
+    tube([[W / 2, yTop, zTop], [W / 2 + OFF + 0.6, yTop, zTop]], 0.03, greyMat);
+    tube([[W / 2, yBot, zBot], [W / 2 + OFF + 0.6, yBot, zBot]], 0.03, greyMat);
+    if (opts.tilted) {
+      // the actual edge through the gap (slanted), bold; plus the plain gap h as a thin vertical reference, struck out
+      const r = dimLine(edge, 0.5, 0.07, whiteMat, 1.4);
+      dimLabels.push({ at: r.anchor, html: '<span class="m">s</span> = ' + r.len.toFixed(1) + ' mm', cls: 'hi' });
+    } else {
+      const r = dimLine([[W / 2 + OFF, yBot, zBot], [W / 2 + OFF, yTop, zTop]], 0.5, 0.07, whiteMat, 1.3);
+      dimLabels.push({ at: r.anchor, html: '<span class="m">h</span> = ' + H.toFixed(0) + ' mm', cls: 'hi' });
+    }
+    // L: the mid-gap front, projected up above the top plate
+    // drawn from the sheet's top edge straight up, so the end extension lines continue the side profile vertically
+    const jt = jTop;
+    // direction of the sheet's side edge (bottom corner -> top corner), so the projection follows a tilted sheet
+    const ddy = yTop - yBot, ddz = zTop - zBot, dl = Math.hypot(ddy, ddz), uy = ddy / dl, uz = ddz / dl;
+    const prof = []; for (let i = 0; i < nx; i += 2) prof.push([x0[jt * nx + i], H / 2 + UP * uy, zd[jt * nx + i] + UP * uz]);
+    if ((nx - 1) % 2) prof.push([x0[jt * nx + nx - 1], H / 2 + UP * uy, zd[jt * nx + nx - 1] + UP * uz]);
+    const rL = dimLine(prof, 0.5, 0.07, whiteMat, 2.6);
+    dimLabels.push({ at: [rL.anchor[0], rL.anchor[1] + 0.2 * uy, rL.anchor[2] + 0.2 * uz], html: '<span class="m">L</span> = ' + rL.len.toFixed(1) + ' mm', cls: 'hi' });
+    // extension ticks from the sheet's top edge up to the projected curve
+    for (const i of [0, nx - 1]) tube([[x0[jt * nx + i], H / 2, zd[jt * nx + i]], [x0[jt * nx + i], H / 2 + (UP + 0.4) * uy, zd[jt * nx + i] + (UP + 0.4) * uz]], 0.03, greyMat);
+  };
+  window.flameSim.dimGroupDebug = () => dimGroup.children.map(c => { c.geometry.computeBoundingBox(); const b = c.geometry.boundingBox; return { type: c.geometry.type, min: [b.min.x, b.min.y, b.min.z].map(v => +v.toFixed(2)), max: [b.max.x, b.max.y, b.max.z].map(v => +v.toFixed(2)), pos: [c.position.x, c.position.y, c.position.z].map(v => +v.toFixed(2)) }; });
+  window.flameSim.placeLabels = () => {                              // HTML labels at the projected anchors
+    let box = document.getElementById('dimlabels');
+    if (!box) { box = document.createElement('div'); box.id = 'dimlabels'; document.body.appendChild(box); }
+    box.innerHTML = '';
+    const w = canvas.clientWidth, h = canvas.clientHeight; camera.updateMatrixWorld();
+    for (const l of dimLabels) {
+      const v = new THREE.Vector3(l.at[0] + CX, l.at[1] + CY, l.at[2]).project(camera);
+      const el = document.createElement('div'); el.className = 'dimlabel ' + l.cls; el.innerHTML = l.html;
+      el.style.left = ((v.x + 1) / 2 * w) + 'px'; el.style.top = ((1 - v.y) / 2 * h) + 'px'; box.appendChild(el);
+    }
+  };
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) P.speed = 0.4;
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.1); last = now;
+    if (sim.on && !paused) simFrame(dt);
+    if (!paused) offset = (offset + P.speed * ST * dt) % SPACING;
+    for (const r of rings.children) {
+      let z = r.userData.z0 - offset; if (z < ZFAR) z += (ZNEAR - ZFAR);
+      r.position.z = z; r.material = z > 0 ? freshMat : burntMat;
+    }
+    placeCamera(); renderer.render(scene, camera); requestAnimationFrame(frame);
+  }
+  function resize() {
+    const w = canvas.clientWidth, h = canvas.clientHeight; renderer.setSize(w, h, false); camera.aspect = w / h;
+    camera.setViewOffset(w, h, 0.10 * w, 0, w, h);
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', resize); resize(); applyDims(); seedCells(); rebuildSheet(); requestAnimationFrame(frame);
+
+  // ---- controls
+  const STATIC = new Set(['amp', 'pos', 'tilt', 'cellH', 'cellR']);  // shape sliders define the initial condition: moving one stops the simulation
+  function bind(id, key, fmt, after) {
+    const el = document.getElementById(id), out = document.getElementById(id + 'v');
+    const apply = () => {
+      P[key] = +el.value; if (out) out.textContent = fmt(P[key]); if (after) after();
+      if (STATIC.has(key) && sim.on) stopSim(); else if (key !== 'speed' && !sim.on) rebuildSheet();
+    };
+    el.addEventListener('input', apply); return apply;
+  }
+  const appliers = [bind('loss', 'loss', v => v.toFixed(2), seedCells), bind('pe', 'pe', v => v.toFixed(1), seedCells), bind('amp', 'amp', v => v.toFixed(2)),
+                    bind('pos', 'pos', v => v.toFixed(2)), bind('tilt', 'tilt', v => v.toFixed(1)), bind('cellH', 'cellH', v => v.toFixed(2)), bind('cellR', 'cellR', v => v.toFixed(1), seedCells),
+                    bind('mark', 'mark', v => v.toFixed(2)), bind('cusp', 'cusp', v => v.toFixed(2)), bind('knot', 'knot', v => v.toFixed(2)), bind('speed', 'speed', v => v.toFixed(2)),
+                    bind('acEps', 'acEps', v => v.toFixed(2)), bind('acF', 'acF', v => v.toFixed(0)), bind('sigma', 'sigma', v => v.toFixed(0)), bind('Mc', 'Mc', v => v.toFixed(2)), bind('Mg', 'Mg', v => v.toFixed(2)),
+                    bind('lamc', 'lamc', v => v.toFixed(2)), bind('simRate', 'simRate', v => v.toFixed(0))];
+  for (const [id, key] of [['useMark', 'useMark'], ['useAc', 'useAc'], ['useShen', 'useShen'], ['useDaou', 'useDaou']])
+    document.getElementById(id).addEventListener('change', e => { P[key] = e.target.checked; if (!sim.on) rebuildSheet(); });
+  document.getElementById('spline').addEventListener('change', e => { P.spline = e.target.checked; rebuildSheet(); });
+  document.getElementById('simbtn').addEventListener('click', () => sim.on ? stopSim() : startSim());
+  document.getElementById('perturb').addEventListener('click', () => { if (sim.on) simPerturb(0.1); });
+  function onDims() {
+    const w = +document.getElementById('dimW').value, h = +document.getElementById('dimH').value;
+    if (!(w >= 2 && w <= 200 && h >= 0.5 && h <= 50)) return;
+    if (sim.on) stopSim();
+    W = w; H = h; applyDims(); seedCells(); rebuildSheet();
+    view.dist = DEFAULT.dist * Math.max(1, Math.sqrt(W * W + H * H) / Math.sqrt(409)); placeCamera();
+  }
+  for (const id of ['SL', 'alpha']) document.getElementById(id).addEventListener('change', e => { const v = +e.target.value; if (v > 0) { P[id] = v; seedCells(); if (!sim.on) rebuildSheet(); } });
+  document.getElementById('dimW').addEventListener('change', onDims);
+  document.getElementById('dimH').addEventListener('change', onDims);
+  document.getElementById('reseed').addEventListener('click', () => { P.seed = (P.seed * 1103515245 + 12345) % 2147483647; seedCells(); if (sim.on) stopSim(); else rebuildSheet(); });
+  document.getElementById('speed').value = P.speed; document.getElementById('speedv').textContent = P.speed.toFixed(2);
+  const pauseBtn = document.getElementById('pause');
+  pauseBtn.addEventListener('click', () => { paused = !paused; pauseBtn.textContent = paused ? 'Play' : 'Pause'; });
+  document.getElementById('resetview').addEventListener('click', () => Object.assign(view, DEFAULT));
+  document.getElementById('resetall').addEventListener('click', () => {
+    if (sim.on) stopSim();
+    for (const [id, v] of [['loss', 0], ['pe', 40], ['amp', 0], ['pos', 0.5], ['tilt', 0], ['cellH', 0], ['cellR', 2.5], ['mark', 0]]) document.getElementById(id).value = v;
+    appliers.forEach(f => f());
+  });
+  let drag = null;
+  canvas.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, yaw: view.yaw, pitch: view.pitch }; canvas.setPointerCapture(e.pointerId); });
+  canvas.addEventListener('pointermove', e => { if (!drag) return; view.yaw = drag.yaw - (e.clientX - drag.x) * 0.006; view.pitch = Math.max(-0.6, Math.min(1.2, drag.pitch + (e.clientY - drag.y) * 0.006)); });
+  canvas.addEventListener('pointerup', () => drag = null);
+  canvas.addEventListener('wheel', e => { view.dist = Math.max(6, Math.min(40, view.dist + e.deltaY * 0.01)); }, { passive: true });
+})();
+</script>
